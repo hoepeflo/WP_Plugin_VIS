@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: VIS - Verbandsinformationssystem
- * Description: Modulares Verbandsinformationssystem für den Kreisschützenverband Fallingbostel mit externer MySQL-Datenhaltung.
- * Version: 0.2.0
+ * Description: Modulares Verbandsinformationssystem für den Kreisschützenverband Fallingbostel.
+ * Version: 0.1.0
  * Author: VIS Team
  * Requires at least: 6.2
  * Requires PHP: 8.0
@@ -20,5 +20,4 @@ function vis_run_plugin(): void
     $plugin = new VIS_Plugin();
     $plugin->run();
 }
-
 vis_run_plugin();

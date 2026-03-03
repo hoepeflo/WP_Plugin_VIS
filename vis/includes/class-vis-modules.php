@@ -6,77 +6,108 @@ if (! defined('ABSPATH')) {
 
 class VIS_Modules
 {
-    public static function get_enabled_modules_for_external_user(int $external_user_id): array
-    {
-        $db = VIS_External_DB::create_connection();
-        if (! $db instanceof wpdb) {
-            return [];
-        }
+    public const OPTION_ENABLED_MODULES = 'vis_enabled_modules_global';
 
-        $modules_table = VIS_External_DB::prefixed_table('modules');
-        $assignments_table = VIS_External_DB::prefixed_table('user_modules');
-
-        $rows = $db->get_results(
-            $db->prepare(
-                "SELECT m.module_key, m.label, m.description, m.required_permission
-                 FROM {$modules_table} m
-                 INNER JOIN {$assignments_table} um ON um.module_id = m.id
-                 WHERE um.user_id = %d AND um.is_enabled = 1 AND m.is_enabled = 1
-                 ORDER BY m.sort_order ASC, m.label ASC",
-                $external_user_id
-            ),
-            ARRAY_A
-        );
-
-        if (! is_array($rows)) {
-            return [];
-        }
-
-        $filtered_modules = [];
-
-        foreach ($rows as $row) {
-            if (! VIS_Access::can_access_module($external_user_id, $row)) {
-                continue;
-            }
-
-            $module_key = sanitize_key((string) ($row['module_key'] ?? ''));
-            $row['module_url'] = add_query_arg('vis_module', $module_key, get_permalink());
-            $filtered_modules[] = $row;
-        }
-
-        return $filtered_modules;
-    }
-
-    public static function render_module(string $module_key, array $external_user): string
-    {
-        if ($module_key === 'bildungsportal') {
-            return VIS_Bildungsportal::render($external_user);
-        }
-
-        return '<div class="vis-module-placeholder"><h3>'
-            . esc_html(sprintf(__('Modul: %s', 'vis'), $module_key))
-            . '</h3><p>'
-            . esc_html__('Dieses Modul ist freigeschaltet. Die fachliche Integration wird im nächsten Schritt ergänzt.', 'vis')
-            . '</p></div>';
-    }
-
-    public static function get_migration_sources(): array
+    public static function get_available_modules(): array
     {
         return [
-            [
-                'module_key' => 'bildungsportal',
-                'label' => 'Bildungsportal',
-                'migration_status' => 'in_progress',
-                'source_type' => 'github_repo',
-                'note' => __('Funktionalität und Datenbankschema aus bestehendem Repository übernehmen, nicht den Code unverändert kopieren.', 'vis'),
+            'bildungsportal' => [
+                'label' => __('Bildungsportal', 'vis'),
+                'description' => __('Anmeldung zu Bildungsangeboten des KSV Fallingbostel.', 'vis'),
             ],
-            [
-                'module_key' => 'kidscup',
-                'label' => 'KidsCup',
-                'migration_status' => 'planned',
-                'source_type' => 'github_repo',
-                'note' => __('Funktionalität und Datenbankschema aus bestehendem Repository übernehmen, nicht den Code unverändert kopieren.', 'vis'),
+            'kidscup' => [
+                'label' => __('KidsCup', 'vis'),
+                'description' => __('Verwaltung und Durchführung des KidsCup-Wettbewerbs.', 'vis'),
             ],
         ];
+    }
+
+    public static function get_globally_enabled_modules(): array
+    {
+        $enabled = get_option(self::OPTION_ENABLED_MODULES, []);
+        return is_array($enabled) ? array_values(array_filter($enabled, 'is_string')) : [];
+    }
+
+    public static function get_enabled_modules_for_user(int $user_id): array
+    {
+        $global = self::get_globally_enabled_modules();
+        $user_modules = get_user_meta($user_id, 'vis_user_modules', true);
+
+        if (! is_array($user_modules) || $user_modules === []) {
+            return $global;
+        }
+
+        return array_values(array_intersect($global, $user_modules));
+    }
+
+    public static function register_settings(): void
+    {
+        register_setting('vis_modules', self::OPTION_ENABLED_MODULES, [
+            'type' => 'array',
+            'sanitize_callback' => [self::class, 'sanitize_modules'],
+            'default' => [],
+        ]);
+    }
+
+    public static function sanitize_modules($modules): array
+    {
+        if (! is_array($modules)) {
+            return [];
+        }
+
+        $allowed_keys = array_keys(self::get_available_modules());
+        $sanitized = array_map('sanitize_key', $modules);
+
+        return array_values(array_intersect($allowed_keys, $sanitized));
+    }
+
+    public static function register_admin_page(): void
+    {
+        add_options_page(
+            __('VIS Module', 'vis'),
+            __('VIS Module', 'vis'),
+            'manage_options',
+            'vis-modules',
+            [self::class, 'render_admin_page']
+        );
+    }
+
+    public static function render_admin_page(): void
+    {
+        if (! current_user_can('manage_options')) {
+            return;
+        }
+
+        $available = self::get_available_modules();
+        $enabled = self::get_globally_enabled_modules();
+        ?>
+        <div class="wrap">
+            <h1><?php esc_html_e('VIS Module verwalten', 'vis'); ?></h1>
+            <form method="post" action="options.php">
+                <?php settings_fields('vis_modules'); ?>
+                <table class="form-table" role="presentation">
+                    <tbody>
+                    <?php foreach ($available as $module_key => $module_data) : ?>
+                        <tr>
+                            <th scope="row"><?php echo esc_html($module_data['label']); ?></th>
+                            <td>
+                                <label>
+                                    <input
+                                        type="checkbox"
+                                        name="<?php echo esc_attr(self::OPTION_ENABLED_MODULES); ?>[]"
+                                        value="<?php echo esc_attr($module_key); ?>"
+                                        <?php checked(in_array($module_key, $enabled, true)); ?>
+                                    />
+                                    <?php echo esc_html($module_data['description']); ?>
+                                </label>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php submit_button(__('Module speichern', 'vis')); ?>
+            </form>
+        </div>
+        <?php
     }
 }
